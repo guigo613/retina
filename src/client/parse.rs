@@ -610,32 +610,37 @@ pub(crate) fn parse_play(
     for s in rtp_info.as_str().split(',') {
         let s = s.trim();
         let mut parts = s.split(';');
-        let url = parts
+        let (stream, url) = if let Some(url) = parts
             .next()
             .expect("split always returns at least one part")
-            .strip_prefix("url=")
-            .ok_or_else(|| "RTP-Info missing stream URL".to_string())?;
-        let url = join_control(&presentation.base_url, url)?;
-        let stream = if presentation.streams.len() == 1 {
-            // The server is allowed to not specify a stream control URL for
-            // single-stream presentations. Additionally, some buggy
-            // cameras (eg the GW Security GW4089IP) use an incorrect URL.
-            // When there is a single stream in the presentation, there's no
-            // ambiguity. Be "forgiving", just as RFC 2326 section 14.3 asks
-            // servers to be forgiving of clients with single-stream
-            // containers.
-            // https://datatracker.ietf.org/doc/html/rfc2326#section-14.3
-            Some(&mut presentation.streams[0])
-        } else {
-            presentation
-                .streams
-                .iter_mut()
-                .find(|s| matches!(&s.control, Some(u) if u == &url))
-        };
+            .strip_prefix("url=") {
+                let url: Url = join_control(&presentation.base_url, url)?;
+                (if presentation.streams.len() == 1 {
+                    // The server is allowed to not specify a stream control URL for
+                    // single-stream presentations. Additionally, some buggy
+                    // cameras (eg the GW Security GW4089IP) use an incorrect URL.
+                    // When there is a single stream in the presentation, there's no
+                    // ambiguity. Be "forgiving", just as RFC 2326 section 14.3 asks
+                    // servers to be forgiving of clients with single-stream
+                    // containers.
+                    // https://datatracker.ietf.org/doc/html/rfc2326#section-14.3
+                    Some(&mut presentation.streams[0])
+                } else {
+                    presentation
+                        .streams
+                        .iter_mut()
+                        .find(|s| matches!(&s.control, Some(u) if u == &url))
+                }, Some(url))
+            } else {
+                (presentation
+                    .streams
+                    .iter_mut()
+                    .find(|s| &*s.media == "video"), None)
+            };
         let stream = match stream {
             Some(s) => s,
             None => {
-                log::warn!("RTP-Info contains unknown stream {}", url);
+                log::warn!("RTP-Info contains unknown stream {}", url.map_or_else(|| "None".to_string(), |u| u.to_string()));
                 continue;
             }
         };
